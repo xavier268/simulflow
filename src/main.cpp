@@ -33,11 +33,14 @@ constexpr int kBrushMin = 1;
 constexpr int kBrushMax = 40;
 constexpr int kBrushInit = 6;
 
-constexpr int kRotStepDeg = 1; // incrément de rotation (touches + / -)
+constexpr int kRotStepDeg = 1;        // incrément de rotation (touches + / -)
+constexpr double kRotCooldown = 0.12; // s : anti-rebond des touches + / -
 
 // Flèche d'effort : facteur unités-réseau -> pixels, et longueur max affichée.
 constexpr float kForcePxPerUnit = 220.0f;
 constexpr float kForceMaxPx = 190.0f;
+
+constexpr int kHistLen = 320; // échantillons du tracé Cz(t) (1 par image)
 
 // Paramètres physiques (unités réseau).
 constexpr double kTau = 0.6; // relaxation BGK  ->  nu = (tau-0.5)/3
@@ -53,6 +56,47 @@ const char *field_name(LbmEngine::Field f) {
     return "pression (Cp)";
   }
   return "?";
+}
+
+// Tracé temporel auto-échelonné (l'axe vertical inclut toujours 0).
+void draw_plot(const std::vector<float> &hist, Rectangle box,
+               const char *label) {
+  DrawRectangleRec(box, Fade(BLACK, 0.55f));
+  DrawRectangleLinesEx(box, 1.0f, Fade(RAYWHITE, 0.30f));
+  DrawText(label, static_cast<int>(box.x) + 6, static_cast<int>(box.y) + 4, 14,
+           RAYWHITE);
+  if (hist.size() < 2)
+    return;
+
+  float lo = 0.0f;
+  float hi = 0.0f;
+  for (float v : hist) {
+    lo = std::min(lo, v);
+    hi = std::max(hi, v);
+  }
+  const float pad = std::max(0.05f, (hi - lo) * 0.12f);
+  lo -= pad;
+  hi += pad;
+
+  const auto y_of = [&](float v) {
+    return box.y + box.height - (v - lo) / (hi - lo) * box.height;
+  };
+
+  if (lo < 0.0f && hi > 0.0f) {
+    const float yz = y_of(0.0f);
+    DrawLineEx({box.x, yz}, {box.x + box.width, yz}, 1.0f,
+               Fade(RAYWHITE, 0.35f));
+  }
+  for (std::size_t i = 1; i < hist.size(); ++i) {
+    const float x1 =
+        box.x + static_cast<float>(i - 1) / (kHistLen - 1) * box.width;
+    const float x2 = box.x + static_cast<float>(i) / (kHistLen - 1) * box.width;
+    DrawLineEx({x1, y_of(hist[i - 1])}, {x2, y_of(hist[i])}, 1.5f, YELLOW);
+  }
+  DrawText(TextFormat("%+.2f", hi), static_cast<int>(box.x + box.width) - 42,
+           static_cast<int>(box.y) + 2, 12, Fade(RAYWHITE, 0.7f));
+  DrawText(TextFormat("%+.2f", lo), static_cast<int>(box.x + box.width) - 42,
+           static_cast<int>(box.y + box.height) - 14, 12, Fade(RAYWHITE, 0.7f));
 }
 
 // Micro-benchmark headless : mesure le débit du solveur (MLUPS).
@@ -132,6 +176,9 @@ int main(int argc, char **argv) {
 
   bool paused = false;
   int brush = kBrushInit;
+  double last_rot_time = 0.0; // anti-rebond des touches de rotation
+  std::vector<float> cz_hist; // historique du coefficient de portance
+  cz_hist.reserve(kHistLen);
 
   // --- Boucle principale -----------------------------------------------
   while (!WindowShouldClose()) {
@@ -144,18 +191,26 @@ int main(int argc, char **argv) {
       const int next = (static_cast<int>(engine->render_field()) + 1) % 3;
       engine->set_render_field(static_cast<LbmEngine::Field>(next));
     }
-    // Rotation : molette + touches. GetCharPressed() capte '+' / '-' quelle que
-    // soit la disposition clavier ; on ajoute le pavé numérique en secours.
+    // Rotation : '+' / '-' (indépendant de la disposition clavier via
+    // GetCharPressed), pavé numérique en secours. Debounce : la répétition
+    // automatique du clavier est écrasée à UN pas par fenêtre de kRotCooldown,
+    // donc un appui bref = 1°, un appui maintenu ~ kRotStepDeg / kRotCooldown
+    // °/s.
+    int rot_dir = 0;
     for (int ch = GetCharPressed(); ch != 0; ch = GetCharPressed()) {
       if (ch == '+')
-        engine->rotate(+kRotStepDeg);
+        rot_dir = +1;
       else if (ch == '-')
-        engine->rotate(-kRotStepDeg);
+        rot_dir = -1;
     }
     if (IsKeyPressed(KEY_KP_ADD))
-      engine->rotate(+kRotStepDeg);
+      rot_dir = +1;
     if (IsKeyPressed(KEY_KP_SUBTRACT))
-      engine->rotate(-kRotStepDeg);
+      rot_dir = -1;
+    if (rot_dir != 0 && GetTime() - last_rot_time >= kRotCooldown) {
+      engine->rotate(rot_dir * kRotStepDeg);
+      last_rot_time = GetTime();
+    }
 
     // 2. Molette : taille du pinceau.
     const float wheel = GetMouseWheelMove();
@@ -172,8 +227,12 @@ int main(int argc, char **argv) {
       engine->stamp_disk(gx, gy, brush, false);
 
     // 4. Simulation.
-    if (!paused)
+    if (!paused) {
       engine->step(kSubSteps);
+      cz_hist.push_back(static_cast<float>(engine->lift_coefficient()));
+      if (static_cast<int>(cz_hist.size()) > kHistLen)
+        cz_hist.erase(cz_hist.begin());
+    }
 
     // 5. Rendu moteur -> buffer -> texture GPU.
     engine->render_to_buffer(pixels, 0.0f);
@@ -213,14 +272,29 @@ int main(int argc, char **argv) {
                         field_name(engine->render_field()),
                         engine->rotation_deg(), paused ? "   [PAUSE]" : ""),
              10, 10, 18, RAYWHITE);
-    DrawText(TextFormat("Cx (trainee) = %+.3f    Cz (portance) = %+.3f",
-                        engine->drag_coefficient(), engine->lift_coefficient()),
-             10, 32, 18, YELLOW);
+    // Coefficients : 2 décimales (1 pour la finesse), valeurs cadrées à droite
+    // sur des colonnes fixes pour que l'affichage ne "danse" pas.
+    const double cx = engine->drag_coefficient();
+    const double cz = engine->lift_coefficient();
+    const auto val_right = [](const char *s, int right_x, int y) {
+      DrawText(s, right_x - MeasureText(s, 18), y, 18, YELLOW);
+    };
+    DrawText("Cx", 10, 32, 18, YELLOW);
+    val_right(TextFormat("%+.2f", cx), 95, 32);
+    DrawText("Cz", 115, 32, 18, YELLOW);
+    val_right(TextFormat("%+.2f", cz), 200, 32);
+    DrawText("finesse Cz/Cx", 220, 32, 18, YELLOW);
+    val_right(std::fabs(cx) > 5e-3 ? TextFormat("%+.1f", cz / cx) : "--", 400,
+              32);
     DrawText(
         TextFormat("clic G : obstacle   clic D : gomme   molette : pinceau "
                    "(%d)   +/- : pivoter   V : champ   R : reset   Espace",
                    brush),
         10, 54, 16, Fade(RAYWHITE, 0.7f));
+
+    draw_plot(cz_hist, Rectangle{10.0f, kWindowHeight - 130.0f, 340.0f, 120.0f},
+              "Cz(t)");
+
     DrawFPS(kWindowWidth - 90, 10);
     EndDrawing();
   }
