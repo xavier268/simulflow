@@ -38,6 +38,14 @@
 // Parois : rebond complet ("halfway bounce-back") — une population qui heurte
 // une cellule solide repart en sens inverse (condition de non-glissement).
 // Entrée (gauche) : vitesse imposée. Sortie (droite) : gradient nul.
+//
+// Obstacles & rotation :
+//   Les obstacles sont stockés une seule fois dans un masque de RÉFÉRENCE
+//   (m_solid_ref), à l'angle 0. Le masque réellement simulé (m_solid) en est
+//   une copie tournée de m_angle_deg autour du centroïde des obstacles, par
+//   rotation inverse (gather, sans trou). Ajouter/effacer de la matière écrit
+//   dans le masque de référence, donc tout — le profil par défaut comme les
+//   ajouts — pivote solidairement. Le profil par défaut n'est jamais redessiné.
 // ============================================================================
 class LbmEngine final : public ISimulationEngine {
 public:
@@ -76,8 +84,15 @@ public:
   // sans toucher aux obstacles.
   void reset();
 
-  // Estampille / efface un disque plein d'obstacles (rayon en cellules).
+  // Estampille / efface un disque plein d'obstacles. (cx, cy) sont des
+  // coordonnées de la grille AFFICHÉE ; le disque est inscrit dans le masque de
+  // référence (donc il pivote avec le reste).
   void stamp_disk(int cx, int cy, int radius, bool active);
+
+  // Pivote TOUS les obstacles de `increment_deg` degrés (typiquement +/-5),
+  // autour du centroïde du masque de référence.
+  void rotate(int increment_deg);
+  int rotation_deg() const { return m_angle_deg; }
 
   int width() const { return m_w; }
   int height() const { return m_h; }
@@ -107,6 +122,14 @@ private:
   void compute_macros();
   void update_solid_bounds();
 
+  // Reconstruit m_solid = m_solid_ref tourné de m_angle_deg (appelé si
+  // m_dirty).
+  void rebuild_solid();
+  // Rotation inverse d'un point grille -> repère de référence (angle 0).
+  void to_reference(double gx, double gy, double &rx, double &ry) const;
+  // Rasterise un profil d'aile NACA 4 chiffres dans le masque de référence.
+  void stamp_airfoil_ref(int x_le, int y_mid, int chord, bool active);
+
   int m_w = 0;
   int m_h = 0;
 
@@ -125,7 +148,14 @@ private:
   std::vector<double> m_ux;
   std::vector<double> m_uy;
 
-  std::vector<std::uint8_t> m_solid; // 1 = paroi solide
+  std::vector<std::uint8_t> m_solid; // masque simulé (référence tournée)
+  std::vector<std::uint8_t> m_solid_ref; // masque de référence, angle 0
+
+  int m_angle_deg = 0;    // rotation courante des obstacles (multiple de 5)
+  bool m_dirty = false;   // m_solid à reconstruire depuis m_solid_ref
+  double m_pivot_x = 0.0; // centroïde du masque de référence (cellules)
+  double m_pivot_y = 0.0;
+  int m_chord_ref = 1; // corde = étendue en x du masque de réf. (pour Cx/Cz)
 
   // Efforts : moyenne sur le dernier step() (m_fx/m_fy) et version lissée
   // (EMA).

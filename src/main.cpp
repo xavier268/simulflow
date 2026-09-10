@@ -18,15 +18,26 @@ namespace {
 constexpr int kWindowWidth = 960;
 constexpr int kWindowHeight = 600;
 
-// Grille de simulation (cellules) — la texture est ensuite étirée à la fenêtre.
-constexpr int kGridWidth = 320;
-constexpr int kGridHeight = 200;
+// Grille de simulation (cellules). Ratio identique à la fenêtre (16:10) pour ne
+// pas déformer. Plus fin = plus de détail, mais coût ~ proportionnel au nombre
+// de cellules.
+constexpr int kGridWidth = 480;
+constexpr int kGridHeight = 300;
 
 // Itérations LBM par image affichée. Monter = évolution plus rapide, coûte +
 // cher.
-constexpr int kSubSteps = 4;
+constexpr int kSubSteps = 2;
 
-constexpr int kBrushRadius = 4; // rayon du pinceau à obstacles (cellules)
+// Rayon du pinceau (cellules) : valeur initiale + bornes pour la molette.
+constexpr int kBrushMin = 1;
+constexpr int kBrushMax = 40;
+constexpr int kBrushInit = 6;
+
+constexpr int kRotStepDeg = 1; // incrément de rotation (touches + / -)
+
+// Flèche d'effort : facteur unités-réseau -> pixels, et longueur max affichée.
+constexpr float kForcePxPerUnit = 220.0f;
+constexpr float kForceMaxPx = 190.0f;
 
 // Paramètres physiques (unités réseau).
 constexpr double kTau = 0.6; // relaxation BGK  ->  nu = (tau-0.5)/3
@@ -116,11 +127,15 @@ int main(int argc, char **argv) {
   const Rectangle dst{0, 0, static_cast<float>(kWindowWidth),
                       static_cast<float>(kWindowHeight)};
 
+  // Facteur cellule -> pixel écran (identique en x et y, ratio conservé).
+  const float cell_px = static_cast<float>(kWindowWidth) / kGridWidth;
+
   bool paused = false;
+  int brush = kBrushInit;
 
   // --- Boucle principale -----------------------------------------------
   while (!WindowShouldClose()) {
-    // 1. Entrées clavier.
+    // 1. Clavier : pause / reset / champ affiché / rotation des obstacles.
     if (IsKeyPressed(KEY_SPACE))
       paused = !paused;
     if (IsKeyPressed(KEY_R))
@@ -129,52 +144,83 @@ int main(int argc, char **argv) {
       const int next = (static_cast<int>(engine->render_field()) + 1) % 3;
       engine->set_render_field(static_cast<LbmEngine::Field>(next));
     }
+    // Rotation : molette + touches. GetCharPressed() capte '+' / '-' quelle que
+    // soit la disposition clavier ; on ajoute le pavé numérique en secours.
+    for (int ch = GetCharPressed(); ch != 0; ch = GetCharPressed()) {
+      if (ch == '+')
+        engine->rotate(+kRotStepDeg);
+      else if (ch == '-')
+        engine->rotate(-kRotStepDeg);
+    }
+    if (IsKeyPressed(KEY_KP_ADD))
+      engine->rotate(+kRotStepDeg);
+    if (IsKeyPressed(KEY_KP_SUBTRACT))
+      engine->rotate(-kRotStepDeg);
 
-    // 2. Entrées souris : clic gauche = obstacle, clic droit = gomme.
-    const Vector2 m = GetMousePosition();
-    const int gx = static_cast<int>(m.x / kWindowWidth * kGridWidth);
-    const int gy = static_cast<int>(m.y / kWindowHeight * kGridHeight);
+    // 2. Molette : taille du pinceau.
+    const float wheel = GetMouseWheelMove();
+    if (wheel != 0.0f)
+      brush = std::clamp(brush + static_cast<int>(wheel), kBrushMin, kBrushMax);
+
+    // 3. Souris : clic gauche = obstacle, clic droit = gomme.
+    const Vector2 mouse = GetMousePosition();
+    const int gx = static_cast<int>(mouse.x / kWindowWidth * kGridWidth);
+    const int gy = static_cast<int>(mouse.y / kWindowHeight * kGridHeight);
     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
-      engine->stamp_disk(gx, gy, kBrushRadius, true);
+      engine->stamp_disk(gx, gy, brush, true);
     if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
-      engine->stamp_disk(gx, gy, kBrushRadius, false);
+      engine->stamp_disk(gx, gy, brush, false);
 
-    // 3. Simulation.
+    // 4. Simulation.
     if (!paused)
       engine->step(kSubSteps);
 
-    // 4. Rendu moteur -> buffer -> texture GPU.
+    // 5. Rendu moteur -> buffer -> texture GPU.
     engine->render_to_buffer(pixels, 0.0f);
     UpdateTexture(texture, pixels.data());
 
-    // 5. Affichage.
+    // 6. Affichage.
     BeginDrawing();
     ClearBackground(BLACK);
     DrawTexturePro(texture, src, dst, {0, 0}, 0.0f, WHITE);
 
-    // Efforts sur l'obstacle : flèche + coefficients.
+    // Aperçu du pinceau sous le curseur.
+    DrawCircleLinesV(mouse, brush * cell_px, Fade(RAYWHITE, 0.6f));
+
+    // Efforts sur l'obstacle : flèche (Cx horizontal, Cz vertical) partant du
+    // centre de l'obstacle. Échelle linéaire, longueur bornée pour rester dans
+    // le cadre — au-delà de kForceMaxPx la direction reste juste mais la
+    // longueur sature.
     const LbmEngine::Bounds b = engine->solid_bounds();
     if (b.valid) {
       const float ox = (b.x0 + b.x1 + 1) * 0.5f / kGridWidth * kWindowWidth;
       const float oy = (b.y0 + b.y1 + 1) * 0.5f / kGridHeight * kWindowHeight;
-      constexpr float kArrow = 6000.0f; // échelle purement visuelle
+      float vx = static_cast<float>(engine->drag()) * kForcePxPerUnit;
+      float vy = -static_cast<float>(engine->lift()) * kForcePxPerUnit;
+      const float len = std::sqrt(vx * vx + vy * vy);
+      if (len > kForceMaxPx) {
+        vx *= kForceMaxPx / len;
+        vy *= kForceMaxPx / len;
+      }
       const Vector2 base{ox, oy};
-      const Vector2 tip{ox + static_cast<float>(engine->drag()) * kArrow,
-                        oy - static_cast<float>(engine->lift()) * kArrow};
-      DrawLineEx(base, tip, 2.0f, YELLOW);
+      const Vector2 tip{ox + vx, oy + vy};
+      DrawLineEx(base, tip, 2.5f, YELLOW);
       DrawCircleV(tip, 4.0f, YELLOW);
     }
 
-    DrawText(TextFormat("%s   champ : %s%s", engine->get_name().c_str(),
+    DrawText(TextFormat("%s   champ : %s   angle : %+d deg%s",
+                        engine->get_name().c_str(),
                         field_name(engine->render_field()),
-                        paused ? "   [PAUSE]" : ""),
+                        engine->rotation_deg(), paused ? "   [PAUSE]" : ""),
              10, 10, 18, RAYWHITE);
     DrawText(TextFormat("Cx (trainee) = %+.3f    Cz (portance) = %+.3f",
                         engine->drag_coefficient(), engine->lift_coefficient()),
              10, 32, 18, YELLOW);
-    DrawText("clic G : obstacle    clic D : gomme    V : champ    R : reset    "
-             "Espace : pause",
-             10, 54, 16, Fade(RAYWHITE, 0.7f));
+    DrawText(
+        TextFormat("clic G : obstacle   clic D : gomme   molette : pinceau "
+                   "(%d)   +/- : pivoter   V : champ   R : reset   Espace",
+                   brush),
+        10, 54, 16, Fade(RAYWHITE, 0.7f));
     DrawFPS(kWindowWidth - 90, 10);
     EndDrawing();
   }

@@ -26,6 +26,8 @@ constexpr int kOpp[kQ] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
 // 1 / c_s^2  avec  c_s^2 = 1/3  (vitesse du son du réseau).
 constexpr double kInvCs2 = 3.0;
 
+constexpr double kPi = 3.14159265358979323846;
+
 // Distribution d'équilibre dans la direction i.
 inline double feq_dir(int i, double rho, double ux, double uy) {
   const double eu = kCx[i] * ux + kCy[i] * uy;
@@ -88,17 +90,14 @@ double LbmEngine::reynolds(double length_scale) const {
 // Coefficients : effort / (1/2 rho_inf U_inf^2 c), c = corde = étendue en x du
 // solide. rho_inf = 1 en unités réseau.
 double LbmEngine::drag_coefficient() const {
-  if (!m_bounds.valid)
-    return 0.0;
-  const double c = m_bounds.x1 - m_bounds.x0 + 1;
+  // c = corde de RÉFÉRENCE (indépendante de l'angle), rho_inf = 1.
+  const double c = m_chord_ref > 0 ? m_chord_ref : 1;
   const double q = 0.5 * m_u_in * m_u_in * c;
   return q > 0.0 ? m_fx_ema / q : 0.0;
 }
 
 double LbmEngine::lift_coefficient() const {
-  if (!m_bounds.valid)
-    return 0.0;
-  const double c = m_bounds.x1 - m_bounds.x0 + 1;
+  const double c = m_chord_ref > 0 ? m_chord_ref : 1;
   const double q = 0.5 * m_u_in * m_u_in * c;
   return q > 0.0 ? -m_fy_ema / q : 0.0; // portance = composante "vers le haut"
 }
@@ -141,12 +140,19 @@ void LbmEngine::init(int grid_width, int grid_height) {
   m_ux.assign(N, 0.0);
   m_uy.assign(N, 0.0);
   m_solid.assign(N, 0);
+  m_solid_ref.assign(N, 0);
+
+  m_angle_deg = 0;
+  m_pivot_x = m_w * 0.5;
+  m_pivot_y = m_h * 0.5;
 
   reset();
 
-  // Obstacle par défaut : un disque légèrement décalé vers le bas pour briser
-  // la symétrie et amorcer l'allée tourbillonnaire de von Kármán.
-  stamp_disk(m_w / 5, m_h / 2 + m_h / 40 + 1, std::max(3, m_h / 10), true);
+  // Obstacle par défaut : profil d'aile NACA 4 chiffres cambré, placé dans le
+  // premier tiers du domaine. Cambré => portance non nulle dès l'incidence 0.
+  const int chord = std::max(8, m_w / 3);
+  stamp_airfoil_ref(m_w / 5, m_h / 2, chord, true);
+  rebuild_solid();
 }
 
 void LbmEngine::reset() {
@@ -161,36 +167,158 @@ void LbmEngine::reset() {
 }
 
 // ============================================================================
-// Obstacles
+// Obstacles — tout est écrit dans le masque de RÉFÉRENCE (angle 0), puis
+// m_solid est reconstruit par rebuild_solid() au prochain step().
 // ============================================================================
+void LbmEngine::to_reference(double gx, double gy, double &rx,
+                             double &ry) const {
+  // Masque affiché = référence tournée de +m_angle_deg autour du pivot.
+  // Donc  référence = R(-angle) * (point - pivot) + pivot.
+  const double a = m_angle_deg * kPi / 180.0;
+  const double ca = std::cos(a);
+  const double sa = std::sin(a);
+  const double dx = gx - m_pivot_x;
+  const double dy = gy - m_pivot_y;
+  rx = m_pivot_x + ca * dx + sa * dy;
+  ry = m_pivot_y - sa * dx + ca * dy;
+}
+
 void LbmEngine::set_obstacle(int grid_x, int grid_y, bool active) {
-  if (grid_x < 0 || grid_y < 0 || grid_x >= m_w || grid_y >= m_h)
+  double rx = 0.0;
+  double ry = 0.0;
+  to_reference(grid_x, grid_y, rx, ry);
+  const int ix = static_cast<int>(std::lround(rx));
+  const int iy = static_cast<int>(std::lround(ry));
+  if (ix < 0 || iy < 0 || ix >= m_w || iy >= m_h)
     return;
-
-  const int n = idx(grid_x, grid_y);
-  const bool was_solid = m_solid[n] != 0;
-  m_solid[n] = active ? 1 : 0;
-
-  // Cellule qui redevient fluide : ses populations sont périmées, on les
-  // réamorce à l'équilibre au repos d'entrée.
-  if (was_solid && !active) {
-    m_rho[n] = 1.0;
-    m_ux[n] = m_u_in;
-    m_uy[n] = 0.0;
-    equilibrium_at(n, 1.0, m_u_in, 0.0);
-  }
+  m_solid_ref[idx(ix, iy)] = active ? 1 : 0;
+  m_dirty = true;
 }
 
 void LbmEngine::stamp_disk(int cx, int cy, int radius, bool active) {
+  // Le centre (grille affichée) est ramené dans le repère de référence, où l'on
+  // trace un disque propre — évite les trous de rééchantillonnage.
+  double rcx = 0.0;
+  double rcy = 0.0;
+  to_reference(cx, cy, rcx, rcy);
+  const int icx = static_cast<int>(std::lround(rcx));
+  const int icy = static_cast<int>(std::lround(rcy));
+
   const int r2 = radius * radius;
-  for (int y = cy - radius; y <= cy + radius; ++y) {
-    for (int x = cx - radius; x <= cx + radius; ++x) {
-      const int dx = x - cx;
-      const int dy = y - cy;
-      if (dx * dx + dy * dy <= r2)
-        set_obstacle(x, y, active);
+  for (int y = icy - radius; y <= icy + radius; ++y) {
+    for (int x = icx - radius; x <= icx + radius; ++x) {
+      const int dx = x - icx;
+      const int dy = y - icy;
+      if (dx * dx + dy * dy <= r2 && x >= 0 && y >= 0 && x < m_w && y < m_h)
+        m_solid_ref[idx(x, y)] = active ? 1 : 0;
     }
   }
+  m_dirty = true;
+}
+
+void LbmEngine::rotate(int increment_deg) {
+  m_angle_deg += increment_deg;
+  while (m_angle_deg > 180)
+    m_angle_deg -= 360;
+  while (m_angle_deg <= -180)
+    m_angle_deg += 360;
+  m_dirty = true;
+}
+
+// NACA 4 chiffres (par défaut ~ NACA 2412). x_le = bord d'attaque (cellule),
+// y_mid = ligne de référence, chord = corde en cellules. Repère écran y vers le
+// bas : on inverse le signe pour que la cambrure bombe vers le haut.
+void LbmEngine::stamp_airfoil_ref(int x_le, int y_mid, int chord, bool active) {
+  if (chord < 4)
+    return;
+  constexpr double mc = 0.02; // cambrure max (fraction de corde)
+  constexpr double pc = 0.40; // position de la cambrure max
+  constexpr double tc = 0.12; // épaisseur max (fraction de corde)
+
+  for (int gx = x_le; gx <= x_le + chord; ++gx) {
+    const double xf = static_cast<double>(gx - x_le) / chord; // [0, 1]
+    if (xf < 0.0 || xf > 1.0)
+      continue;
+
+    const double yt =
+        5.0 * tc *
+        (0.2969 * std::sqrt(xf) - 0.1260 * xf - 0.3516 * xf * xf +
+         0.2843 * xf * xf * xf - 0.1036 * xf * xf * xf * xf); // TE fermé
+
+    double yc = 0.0;
+    if (xf < pc)
+      yc = mc / (pc * pc) * (2.0 * pc * xf - xf * xf);
+    else
+      yc = mc / ((1.0 - pc) * (1.0 - pc)) *
+           ((1.0 - 2.0 * pc) + 2.0 * pc * xf - xf * xf);
+
+    const int gy_top = y_mid - static_cast<int>(std::ceil((yc + yt) * chord));
+    const int gy_bot = y_mid - static_cast<int>(std::floor((yc - yt) * chord));
+    for (int gy = gy_top; gy <= gy_bot; ++gy)
+      if (gx >= 0 && gy >= 0 && gx < m_w && gy < m_h)
+        m_solid_ref[idx(gx, gy)] = active ? 1 : 0;
+  }
+  m_dirty = true;
+}
+
+void LbmEngine::rebuild_solid() {
+  m_dirty = false;
+
+  // Pivot = centroïde du masque de référence ; corde = étendue en x.
+  double sx = 0.0;
+  double sy = 0.0;
+  long count = 0;
+  int rx0 = m_w;
+  int rx1 = -1;
+  for (int y = 0; y < m_h; ++y)
+    for (int x = 0; x < m_w; ++x)
+      if (m_solid_ref[idx(x, y)]) {
+        sx += x;
+        sy += y;
+        ++count;
+        rx0 = std::min(rx0, x);
+        rx1 = std::max(rx1, x);
+      }
+  if (count > 0) {
+    m_pivot_x = sx / count;
+    m_pivot_y = sy / count;
+    m_chord_ref = rx1 - rx0 + 1;
+  } else {
+    m_pivot_x = m_w * 0.5;
+    m_pivot_y = m_h * 0.5;
+    m_chord_ref = 1;
+  }
+
+  const double a = m_angle_deg * kPi / 180.0;
+  const double ca = std::cos(a);
+  const double sa = std::sin(a);
+
+  for (int y = 0; y < m_h; ++y) {
+    for (int x = 0; x < m_w; ++x) {
+      // Rotation inverse (gather) : chaque cellule affichée va chercher sa
+      // valeur dans le masque de référence -> pas de trou.
+      const double dx = x - m_pivot_x;
+      const double dy = y - m_pivot_y;
+      const long ix = std::lround(m_pivot_x + ca * dx + sa * dy);
+      const long iy = std::lround(m_pivot_y - sa * dx + ca * dy);
+
+      const bool solid =
+          ix >= 0 && iy >= 0 && ix < m_w && iy < m_h &&
+          m_solid_ref[idx(static_cast<int>(ix), static_cast<int>(iy))] != 0;
+
+      const int n = idx(x, y);
+      if (m_solid[n] && !solid) {
+        // Cellule qui redevient fluide : populations réamorcées à l'équilibre.
+        m_rho[n] = 1.0;
+        m_ux[n] = m_u_in;
+        m_uy[n] = 0.0;
+        equilibrium_at(n, 1.0, m_u_in, 0.0);
+      }
+      m_solid[n] = solid ? 1 : 0;
+    }
+  }
+
+  update_solid_bounds();
 }
 
 // ============================================================================
@@ -298,6 +426,9 @@ void LbmEngine::compute_macros() {
 void LbmEngine::step(int sub_steps) {
   if (m_f.empty())
     return;
+
+  if (m_dirty)
+    rebuild_solid();
 
   const int iters = std::max(sub_steps, 1);
   double sum_fx = 0.0;
