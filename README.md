@@ -1,0 +1,1 @@
+This is a cmake/cpp23 template project with clang/libc++  configuration presets.

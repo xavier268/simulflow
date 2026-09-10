@@ -1,0 +1,12 @@
+#pragma once
+
+#include <string_view>
+
+namespace version {
+inline constexpr std::string_view GIT_HASH = "@GIT_HASH@";
+inline constexpr std::string_view BUILD_TIME = "@BUILD_TIME@";
+inline constexpr std::string_view VERSION = "@PROJECT_VERSION@";
+
+// Informations sur le compilateur
+inline constexpr std::string_view COMPILER = "@COMPILER_INFO@";
+} // namespace version

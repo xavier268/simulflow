@@ -1,0 +1,32 @@
+{
+  // --- 1. Résolution des en-têtes et IntelliSense ---
+  // Lie IntelliSense à CMake pour détecter automatiquement les dossiers include/
+  // "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  // "C_Cpp.default.cppStandard": "c++23",
+  // "C_Cpp.default.compilerPath": "/usr/bin/clang++",
+  // "C_Cpp.default.compilerArgs": ["-stdlib=libc++"],
+  // "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+
+  // --- 2. Formatage automatique avec clang-format ---
+  "[cpp]": {
+    "editor.defaultFormatter": "xaver.clang-format",
+    "editor.formatOnSave": true
+  },
+  "[c]": {
+    "editor.defaultFormatter": "xaver.clang-format",
+    "editor.formatOnSave": true
+  },
+  "clang-format.executable": "clang-format",
+  "clang-format.style": "file",
+
+  // --- 3. Intégration CMake ---
+  "cmake.buildDirectory": "${workspaceFolder}/build",
+  "cmake.exportCompileCommandsFile": true,
+
+  // --- 4. Exclusions de recherche VS Code ---
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/build/**": true
+  }
+}
