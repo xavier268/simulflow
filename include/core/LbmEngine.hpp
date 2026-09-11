@@ -94,6 +94,12 @@ public:
   void rotate(int increment_deg);
   int rotation_deg() const { return m_angle_deg; }
 
+  // Translate TOUS les obstacles de (dx, dy) cellules (repère écran affiché).
+  // Écrit dans le masque de référence (donc solidaire de la rotation) ; les
+  // cellules qui sortent de la grille sont perdues (rognées), pas de
+  // rebouclage.
+  void translate(int dx, int dy);
+
   int width() const { return m_w; }
   int height() const { return m_h; }
 

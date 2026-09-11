@@ -14,15 +14,30 @@
 
 namespace {
 
-// Fenêtre (pixels écran).
+// Fenêtre (pixels écran) — taille initiale, redimensionnable ensuite.
 constexpr int kWindowWidth = 960;
 constexpr int kWindowHeight = 600;
 
-// Grille de simulation (cellules). Ratio identique à la fenêtre (16:10) pour ne
-// pas déformer. Plus fin = plus de détail, mais coût ~ proportionnel au nombre
-// de cellules.
+// Grille de simulation (cellules) — taille initiale. Ratio identique à la
+// fenêtre (16:10) pour ne pas déformer. Plus fin = plus de détail, mais coût
+// ~ proportionnel au nombre de cellules.
 constexpr int kGridWidth = 480;
 constexpr int kGridHeight = 300;
+
+// Échelle fixe cellule -> pixel écran (2 px/cellule), conservée lors des
+// redimensionnements : la grille suit la fenêtre en taille ET en ratio, le
+// coût de calcul suit proportionnellement.
+constexpr float kCellPx = static_cast<float>(kWindowWidth) / kGridWidth;
+
+// Taille mini de la grille (cellules), pour éviter un domaine dégénéré si la
+// fenêtre est réduite à presque rien.
+constexpr int kGridMin = 20;
+
+// Anti-rebond du redimensionnement : le glissement d'un bord de fenêtre émet
+// un évènement par image. On attend que la taille se stabilise pendant
+// kResizeDebounce avant de reconstruire la grille (coûteux : realloc +
+// reset), plutôt que de le faire à chaque image pendant le glissement.
+constexpr double kResizeDebounce = 0.15; // s
 
 // Itérations LBM par image affichée. Monter = évolution plus rapide, coûte +
 // cher.
@@ -35,6 +50,9 @@ constexpr int kBrushInit = 6;
 
 constexpr int kRotStepDeg = 1;        // incrément de rotation (touches + / -)
 constexpr double kRotCooldown = 0.12; // s : anti-rebond des touches + / -
+
+constexpr int kTransStepCells = 2;      // pas de translation (touches flèches)
+constexpr double kTransCooldown = 0.03; // s : anti-rebond des touches flèches
 
 // Flèche d'effort : facteur unités-réseau -> pixels, et longueur max affichée.
 constexpr float kForcePxPerUnit = 220.0f;
@@ -154,39 +172,86 @@ int main(int argc, char **argv) {
     return run_bench(*engine, iters - iters % 50);
   }
 
-  std::vector<Color> pixels(static_cast<std::size_t>(kGridWidth) * kGridHeight,
-                            Color{0, 0, 0, 255});
+  std::vector<Color> pixels;
 
   // --- Fenêtre + texture Raylib -----------------------------------------
-  SetConfigFlags(FLAG_VSYNC_HINT);
+  SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
   InitWindow(kWindowWidth, kWindowHeight, "simulflow - LBM D2Q9");
   SetTargetFPS(60);
 
-  Image canvas = GenImageColor(kGridWidth, kGridHeight, BLACK);
+  int window_w = kWindowWidth;
+  int window_h = kWindowHeight;
+  int grid_w = kGridWidth;
+  int grid_h = kGridHeight;
+
+  Image canvas = GenImageColor(grid_w, grid_h, BLACK);
   Texture2D texture = LoadTextureFromImage(canvas);
   UnloadImage(canvas);
 
-  const Rectangle src{0, 0, static_cast<float>(kGridWidth),
-                      static_cast<float>(kGridHeight)};
-  const Rectangle dst{0, 0, static_cast<float>(kWindowWidth),
-                      static_cast<float>(kWindowHeight)};
-
-  // Facteur cellule -> pixel écran (identique en x et y, ratio conservé).
-  const float cell_px = static_cast<float>(kWindowWidth) / kGridWidth;
-
   bool paused = false;
   int brush = kBrushInit;
-  double last_rot_time = 0.0; // anti-rebond des touches de rotation
+  bool show_cz_plot = true;
+  bool show_hud = true; // H : bascule l'overlay d'infos/instructions en haut
+  double last_rot_time = 0.0;   // anti-rebond des touches de rotation
+  double last_trans_time = 0.0; // anti-rebond des touches de translation
   std::vector<float> cz_hist; // historique du coefficient de portance
   cz_hist.reserve(kHistLen);
 
+  // Reconstruit grille + texture + moteur pour coller à une nouvelle taille de
+  // fenêtre (ratio cellule/pixel fixe kCellPx) : redémarre donc la simulation.
+  const auto rebuild_for_window = [&](int new_w, int new_h) {
+    window_w = new_w;
+    window_h = new_h;
+    grid_w = std::max(kGridMin,
+                       static_cast<int>(std::lround(window_w / kCellPx)));
+    grid_h = std::max(kGridMin,
+                       static_cast<int>(std::lround(window_h / kCellPx)));
+
+    pixels.assign(static_cast<std::size_t>(grid_w) * grid_h,
+                  Color{0, 0, 0, 255});
+
+    UnloadTexture(texture);
+    Image img = GenImageColor(grid_w, grid_h, BLACK);
+    texture = LoadTextureFromImage(img);
+    UnloadImage(img);
+
+    engine->init(grid_w, grid_h);
+    cz_hist.clear();
+  };
+  rebuild_for_window(window_w, window_h);
+
+  bool resize_pending = false;
+  int pending_w = window_w;
+  int pending_h = window_h;
+  double last_resize_time = 0.0;
+
   // --- Boucle principale -----------------------------------------------
   while (!WindowShouldClose()) {
+    // 0. Redimensionnement : anti-rebond pendant le glissement du bord de
+    // fenêtre, reconstruction unique une fois la taille stabilisée.
+    if (IsWindowResized()) {
+      pending_w = GetScreenWidth();
+      pending_h = GetScreenHeight();
+      resize_pending = true;
+      last_resize_time = GetTime();
+    }
+    if (resize_pending && GetTime() - last_resize_time >= kResizeDebounce) {
+      rebuild_for_window(pending_w, pending_h);
+      resize_pending = false;
+    }
+
     // 1. Clavier : pause / reset / champ affiché / rotation des obstacles.
     if (IsKeyPressed(KEY_SPACE))
       paused = !paused;
     if (IsKeyPressed(KEY_R))
       engine->reset();
+    // Z (QWERTY) / W (AZERTY, même touche physique — raylib rapporte le
+    // scancode "Z" du clavier US, qui est la touche W en disposition
+    // française) : bascule l'affichage du graphe Cz(t).
+    if (IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_W))
+      show_cz_plot = !show_cz_plot;
+    if (IsKeyPressed(KEY_H))
+      show_hud = !show_hud;
     if (IsKeyPressed(KEY_V)) {
       const int next = (static_cast<int>(engine->render_field()) + 1) % 3;
       engine->set_render_field(static_cast<LbmEngine::Field>(next));
@@ -212,6 +277,24 @@ int main(int argc, char **argv) {
       last_rot_time = GetTime();
     }
 
+    // Translation : flèches directionnelles, maintenues = mouvement continu
+    // (même anti-rebond que la rotation). Ce qui sort de la grille est rogné.
+    int tdx = 0;
+    int tdy = 0;
+    if (IsKeyDown(KEY_LEFT))
+      tdx -= 1;
+    if (IsKeyDown(KEY_RIGHT))
+      tdx += 1;
+    if (IsKeyDown(KEY_UP))
+      tdy -= 1;
+    if (IsKeyDown(KEY_DOWN))
+      tdy += 1;
+    if ((tdx != 0 || tdy != 0) &&
+        GetTime() - last_trans_time >= kTransCooldown) {
+      engine->translate(tdx * kTransStepCells, tdy * kTransStepCells);
+      last_trans_time = GetTime();
+    }
+
     // 2. Molette : taille du pinceau.
     const float wheel = GetMouseWheelMove();
     if (wheel != 0.0f)
@@ -219,8 +302,8 @@ int main(int argc, char **argv) {
 
     // 3. Souris : clic gauche = obstacle, clic droit = gomme.
     const Vector2 mouse = GetMousePosition();
-    const int gx = static_cast<int>(mouse.x / kWindowWidth * kGridWidth);
-    const int gy = static_cast<int>(mouse.y / kWindowHeight * kGridHeight);
+    const int gx = static_cast<int>(mouse.x / window_w * grid_w);
+    const int gy = static_cast<int>(mouse.y / window_h * grid_h);
     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
       engine->stamp_disk(gx, gy, brush, true);
     if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
@@ -239,12 +322,17 @@ int main(int argc, char **argv) {
     UpdateTexture(texture, pixels.data());
 
     // 6. Affichage.
+    const Rectangle src{0, 0, static_cast<float>(grid_w),
+                        static_cast<float>(grid_h)};
+    const Rectangle dst{0, 0, static_cast<float>(window_w),
+                        static_cast<float>(window_h)};
+
     BeginDrawing();
     ClearBackground(BLACK);
     DrawTexturePro(texture, src, dst, {0, 0}, 0.0f, WHITE);
 
     // Aperçu du pinceau sous le curseur.
-    DrawCircleLinesV(mouse, brush * cell_px, Fade(RAYWHITE, 0.6f));
+    DrawCircleLinesV(mouse, brush * kCellPx, Fade(RAYWHITE, 0.6f));
 
     // Efforts sur l'obstacle : flèche (Cx horizontal, Cz vertical) partant du
     // centre de l'obstacle. Échelle linéaire, longueur bornée pour rester dans
@@ -252,8 +340,8 @@ int main(int argc, char **argv) {
     // longueur sature.
     const LbmEngine::Bounds b = engine->solid_bounds();
     if (b.valid) {
-      const float ox = (b.x0 + b.x1 + 1) * 0.5f / kGridWidth * kWindowWidth;
-      const float oy = (b.y0 + b.y1 + 1) * 0.5f / kGridHeight * kWindowHeight;
+      const float ox = (b.x0 + b.x1 + 1) * 0.5f / grid_w * window_w;
+      const float oy = (b.y0 + b.y1 + 1) * 0.5f / grid_h * window_h;
       float vx = static_cast<float>(engine->drag()) * kForcePxPerUnit;
       float vy = -static_cast<float>(engine->lift()) * kForcePxPerUnit;
       const float len = std::sqrt(vx * vx + vy * vy);
@@ -267,35 +355,42 @@ int main(int argc, char **argv) {
       DrawCircleV(tip, 4.0f, YELLOW);
     }
 
-    DrawText(TextFormat("%s   champ : %s   angle : %+d deg%s",
-                        engine->get_name().c_str(),
-                        field_name(engine->render_field()),
-                        engine->rotation_deg(), paused ? "   [PAUSE]" : ""),
-             10, 10, 18, RAYWHITE);
-    // Coefficients : 2 décimales (1 pour la finesse), valeurs cadrées à droite
-    // sur des colonnes fixes pour que l'affichage ne "danse" pas.
-    const double cx = engine->drag_coefficient();
-    const double cz = engine->lift_coefficient();
-    const auto val_right = [](const char *s, int right_x, int y) {
-      DrawText(s, right_x - MeasureText(s, 18), y, 18, YELLOW);
-    };
-    DrawText("Cx", 10, 32, 18, YELLOW);
-    val_right(TextFormat("%+.2f", cx), 95, 32);
-    DrawText("Cz", 115, 32, 18, YELLOW);
-    val_right(TextFormat("%+.2f", cz), 200, 32);
-    DrawText("finesse Cz/Cx", 220, 32, 18, YELLOW);
-    val_right(std::fabs(cx) > 5e-3 ? TextFormat("%+.1f", cz / cx) : "--", 400,
-              32);
-    DrawText(
-        TextFormat("clic G : obstacle   clic D : gomme   molette : pinceau "
-                   "(%d)   +/- : pivoter   V : champ   R : reset   Espace",
-                   brush),
-        10, 54, 16, Fade(RAYWHITE, 0.7f));
+    // H : bascule tout l'overlay d'infos du haut (état, coefficients,
+    // instructions), pour observer l'écoulement sans obstruction visuelle.
+    if (show_hud) {
+      DrawText(TextFormat("%s   champ : %s   angle : %+d deg%s",
+                          engine->get_name().c_str(),
+                          field_name(engine->render_field()),
+                          engine->rotation_deg(), paused ? "   [PAUSE]" : ""),
+               10, 10, 18, RAYWHITE);
+      // Coefficients : 2 décimales (1 pour la finesse), valeurs cadrées à
+      // droite sur des colonnes fixes pour que l'affichage ne "danse" pas.
+      const double cx = engine->drag_coefficient();
+      const double cz = engine->lift_coefficient();
+      const auto val_right = [](const char *s, int right_x, int y) {
+        DrawText(s, right_x - MeasureText(s, 18), y, 18, YELLOW);
+      };
+      DrawText("Cx", 10, 32, 18, YELLOW);
+      val_right(TextFormat("%+.2f", cx), 95, 32);
+      DrawText("Cz", 115, 32, 18, YELLOW);
+      val_right(TextFormat("%+.2f", cz), 200, 32);
+      DrawText("finesse Cz/Cx", 220, 32, 18, YELLOW);
+      val_right(std::fabs(cx) > 5e-3 ? TextFormat("%+.1f", cz / cx) : "--",
+                400, 32);
+      DrawText(
+          TextFormat("clic G : obstacle   clic D : gomme   molette : "
+                     "pinceau (%d)   +/- : pivoter   fleches : deplacer   "
+                     "V : champ   R : reset   Espace   Z : Cz(t)   H : hud",
+                     brush),
+          10, 54, 16, Fade(RAYWHITE, 0.7f));
+    }
 
-    draw_plot(cz_hist, Rectangle{10.0f, kWindowHeight - 130.0f, 340.0f, 120.0f},
-              "Cz(t)");
+    if (show_cz_plot)
+      draw_plot(cz_hist,
+                Rectangle{10.0f, window_h - 130.0f, 340.0f, 120.0f}, "Cz(t)");
 
-    DrawFPS(kWindowWidth - 90, 10);
+    if (show_hud)
+      DrawFPS(window_w - 90, 10);
     EndDrawing();
   }
 

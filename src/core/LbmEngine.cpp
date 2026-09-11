@@ -225,6 +225,31 @@ void LbmEngine::rotate(int increment_deg) {
   m_dirty = true;
 }
 
+// Translation rigide du masque de référence : comme la rotation se fait
+// autour du centroïde du masque de référence, décaler ce dernier de (dx, dy)
+// décale le centroïde d'autant, donc le masque AFFICHÉ (rotation comprise)
+// suit exactement le même décalage (dx, dy) quel que soit l'angle courant.
+// Les cellules qui sortiraient de la grille sont simplement perdues.
+void LbmEngine::translate(int dx, int dy) {
+  if (dx == 0 && dy == 0)
+    return;
+
+  std::vector<std::uint8_t> shifted(m_solid_ref.size(), 0);
+  for (int y = 0; y < m_h; ++y) {
+    const int sy = y - dy;
+    if (sy < 0 || sy >= m_h)
+      continue;
+    for (int x = 0; x < m_w; ++x) {
+      const int sx = x - dx;
+      if (sx < 0 || sx >= m_w)
+        continue;
+      shifted[idx(x, y)] = m_solid_ref[idx(sx, sy)];
+    }
+  }
+  m_solid_ref.swap(shifted);
+  m_dirty = true;
+}
+
 // NACA 4 chiffres (par défaut ~ NACA 2412). x_le = bord d'attaque (cellule),
 // y_mid = ligne de référence, chord = corde en cellules. Repère écran y vers le
 // bas : on inverse le signe pour que la cambrure bombe vers le haut.
