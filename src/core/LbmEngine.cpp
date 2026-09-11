@@ -57,6 +57,12 @@ inline Rgb colormap_speed(double t) {
                                    {180, 40, 90},
                                    {250, 170, 40},
                                    {255, 255, 220}};
+  // std::clamp laisse passer NaN inchangé (les deux comparaisons sont
+  // fausses) ; sans ce garde-fou, une divergence numérique du solveur
+  // (rho -> 0 => ux = mx/rho = NaN) donnerait un cast UB vers int puis un
+  // accès hors bornes de `stops`.
+  if (!std::isfinite(t))
+    t = 1.0; // divergence -> couleur saturée plutôt qu'un index invalide
   const double x = std::clamp(t, 0.0, 1.0) * 4.0;
   const int k = std::min(3, static_cast<int>(x));
   return lerp(stops[k], stops[k + 1], x - k);
@@ -66,6 +72,10 @@ inline Rgb colormap_speed(double t) {
 // Sert à la vorticité (sens de rotation) ET à la pression
 // (dépression/surpression).
 inline Rgb colormap_diverging(double t) {
+  // Même garde-fou que colormap_speed : NaN traverse std::clamp sans être
+  // rejeté.
+  if (!std::isfinite(t))
+    t = 1.0;
   t = std::clamp(t, -1.0, 1.0);
   const Rgb mid{10, 12, 18};
   return t < 0.0 ? lerp(mid, Rgb{60, 120, 255}, -t) // bleu : négatif
