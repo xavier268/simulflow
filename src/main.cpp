@@ -269,6 +269,12 @@ int main(int argc, char **argv) {
       const int next = (static_cast<int>(engine->render_field()) + 1) % 3;
       engine->set_render_field(static_cast<LbmEngine::Field>(next));
     }
+    // / : bascule les bords haut/bas entre paroi fixe et frontière libre.
+    // KEY_PERIOD en secours : même souci de disposition clavier que Z/W
+    // ci-dessus — la touche "/" en AZERTY (Shift + ".") est rapportée par
+    // raylib comme KEY_PERIOD, pas KEY_SLASH.
+    if (IsKeyPressed(KEY_SLASH) || IsKeyPressed(KEY_PERIOD))
+      engine->set_open_top_bottom(!engine->open_top_bottom());
     // Rotation : '+' / '-' (indépendant de la disposition clavier via
     // GetCharPressed), pavé numérique en secours. Debounce : la répétition
     // automatique du clavier est écrasée à UN pas par fenêtre de kRotCooldown,
@@ -371,10 +377,12 @@ int main(int argc, char **argv) {
     // H : bascule tout l'overlay d'infos du haut (état, coefficients,
     // instructions), pour observer l'écoulement sans obstruction visuelle.
     if (show_hud) {
-      DrawText(TextFormat("%s   champ : %s   angle : %+d deg%s",
+      DrawText(TextFormat("%s   champ : %s   angle : %+d deg   bords : %s%s",
                           engine->get_name().c_str(),
                           field_name(engine->render_field()),
-                          engine->rotation_deg(), paused ? "   [PAUSE]" : ""),
+                          engine->rotation_deg(),
+                          engine->open_top_bottom() ? "libres" : "parois",
+                          paused ? "   [PAUSE]" : ""),
                10, 10, 18, RAYWHITE);
       // Coefficients : 2 décimales (1 pour la finesse), valeurs cadrées à
       // droite sur des colonnes fixes pour que l'affichage ne "danse" pas.
@@ -393,7 +401,8 @@ int main(int argc, char **argv) {
       DrawText(
           TextFormat("clic G : obstacle   clic D : gomme   molette : "
                      "pinceau (%d)   +/- : pivoter   fleches : deplacer   "
-                     "V : champ   R : reset   Espace   Z : Cz(t)   H : hud",
+                     "V : champ   / : bords haut/bas   R : reset   Espace   "
+                     "Z : Cz(t)   H : hud",
                      brush),
           10, 54, 16, Fade(RAYWHITE, 0.7f));
     }

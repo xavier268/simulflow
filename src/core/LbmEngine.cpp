@@ -389,6 +389,26 @@ void LbmEngine::apply_boundaries() {
     for (int i = 0; i < kQ; ++i)
       m_f[i * N + n] = m_f[i * N + nm];
   }
+
+  // Haut/bas (optionnel) : frontière libre, même traitement gradient-nul que
+  // la sortie — recopie depuis la ligne intérieure voisine.
+  if (m_open_top_bottom) {
+    for (int x = 0; x < m_w; ++x) {
+      const int n_top = idx(x, 0);
+      const int n_top_in = idx(x, 1);
+      if (!m_solid[n_top]) {
+        for (int i = 0; i < kQ; ++i)
+          m_f[i * N + n_top] = m_f[i * N + n_top_in];
+      }
+
+      const int n_bot = idx(x, m_h - 1);
+      const int n_bot_in = idx(x, m_h - 2);
+      if (!m_solid[n_bot]) {
+        for (int i = 0; i < kQ; ++i)
+          m_f[i * N + n_bot] = m_f[i * N + n_bot_in];
+      }
+    }
+  }
 }
 
 void LbmEngine::collide_and_stream(double &fx, double &fy) {
@@ -426,8 +446,16 @@ void LbmEngine::collide_and_stream(double &fx, double &fy) {
         const bool out_of_domain = xn < 0 || yn < 0 || xn >= m_w || yn >= m_h;
 
         if (out_of_domain) {
-          // Bord du domaine (paroi haut/bas, ou entrée/sortie réécrites après).
-          m_f_tmp[kOpp[i] * N + n] = fpost;
+          const bool leaves_top_bottom = yn < 0 || yn >= m_h;
+          if (m_open_top_bottom && leaves_top_bottom) {
+            // Frontière libre : la population quitte le domaine, pas de
+            // rebond (la ligne de bord est de toute façon réécrite en
+            // gradient nul par apply_boundaries()).
+          } else {
+            // Bord du domaine (paroi haut/bas, ou entrée/sortie réécrites
+            // après).
+            m_f_tmp[kOpp[i] * N + n] = fpost;
+          }
         } else if (m_solid[idx(xn, yn)]) {
           // Heurte un obstacle : rebond complet + échange de quantité de
           // mouvement. La population arrive avec c_i*fpost et repart avec
@@ -552,6 +580,16 @@ void LbmEngine::render_to_buffer(std::vector<Color> &pixel_buffer,
       }
 
       pixel_buffer[n] = Color{c.r, c.g, c.b, 255};
+    }
+  }
+
+  // Marque visuellement les bords haut/bas : ligne jaune si paroi fixe, rien
+  // si frontière libre.
+  if (!m_open_top_bottom) {
+    constexpr Color kWallColor{255, 255, 0, 255};
+    for (int x = 0; x < m_w; ++x) {
+      pixel_buffer[idx(x, 0)] = kWallColor;
+      pixel_buffer[idx(x, m_h - 1)] = kWallColor;
     }
   }
 }

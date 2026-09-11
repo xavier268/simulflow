@@ -79,6 +79,10 @@ public:
   void set_relaxation_time(double tau);
   void set_render_field(Field f) { m_field = f; }
   Field render_field() const { return m_field; }
+  // Bords haut/bas : paroi fixe (rebond, défaut) ou frontière libre
+  // (gradient nul, comme la sortie à droite).
+  void set_open_top_bottom(bool open) { m_open_top_bottom = open; }
+  bool open_top_bottom() const { return m_open_top_bottom; }
 
   // Ré-initialise les populations (équilibre au repos, vitesse d'entrée),
   // sans toucher aux obstacles.
@@ -144,6 +148,7 @@ private:
   double m_u_in = 0.08;       // vitesse d'entrée (unités réseau)
 
   Field m_field = Field::Vorticity;
+  bool m_open_top_bottom = false; // false = parois fixes (défaut)
 
   // Populations : disposition SoA — m_f[dir * N + cell], N = m_w * m_h.
   std::vector<double> m_f;     // état courant
