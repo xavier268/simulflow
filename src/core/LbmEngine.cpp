@@ -174,6 +174,15 @@ void LbmEngine::reset() {
     m_uy[n] = 0.0;
     equilibrium_at(n, 1.0, u, 0.0);
   }
+
+  // Efforts (bruts + lissage exponentiel) : à remettre à zéro explicitement,
+  // sinon un NaN issu d'une divergence numérique contamine m_fx_ema/m_fy_ema
+  // pour toujours (kEma*NaN + (1-kEma)*x = NaN quel que soit x fini), même
+  // après ce reset des champs.
+  m_fx = 0.0;
+  m_fy = 0.0;
+  m_fx_ema = 0.0;
+  m_fy_ema = 0.0;
 }
 
 // ============================================================================

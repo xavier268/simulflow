@@ -86,12 +86,21 @@ void draw_plot(const std::vector<float> &hist, Rectangle box,
   if (hist.size() < 2)
     return;
 
+  // Garde-fou anti-NaN : même principe que colormap_speed/colormap_diverging
+  // (un seul échantillon non fini, issu d'une divergence numérique passée,
+  // casserait sinon min/max et donc tout le tracé).
   float lo = 0.0f;
   float hi = 0.0f;
+  bool any_finite = false;
   for (float v : hist) {
-    lo = std::min(lo, v);
-    hi = std::max(hi, v);
+    if (!std::isfinite(v))
+      continue;
+    lo = any_finite ? std::min(lo, v) : v;
+    hi = any_finite ? std::max(hi, v) : v;
+    any_finite = true;
   }
+  if (!any_finite)
+    return;
   const float pad = std::max(0.05f, (hi - lo) * 0.12f);
   lo -= pad;
   hi += pad;
@@ -106,6 +115,8 @@ void draw_plot(const std::vector<float> &hist, Rectangle box,
                Fade(RAYWHITE, 0.35f));
   }
   for (std::size_t i = 1; i < hist.size(); ++i) {
+    if (!std::isfinite(hist[i - 1]) || !std::isfinite(hist[i]))
+      continue;
     const float x1 =
         box.x + static_cast<float>(i - 1) / (kHistLen - 1) * box.width;
     const float x2 = box.x + static_cast<float>(i) / (kHistLen - 1) * box.width;
@@ -243,8 +254,10 @@ int main(int argc, char **argv) {
     // 1. Clavier : pause / reset / champ affiché / rotation des obstacles.
     if (IsKeyPressed(KEY_SPACE))
       paused = !paused;
-    if (IsKeyPressed(KEY_R))
+    if (IsKeyPressed(KEY_R)) {
       engine->reset();
+      cz_hist.clear();
+    }
     // Z (QWERTY) / W (AZERTY, même touche physique — raylib rapporte le
     // scancode "Z" du clavier US, qui est la touche W en disposition
     // française) : bascule l'affichage du graphe Cz(t).
