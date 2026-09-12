@@ -1,0 +1,33 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Configurer (Windows / mingw)",
+      "type": "shell",
+      "command": "cmake --preset mingw",
+      "problemMatcher": []
+    },
+    {
+      "label": "Compiler (Windows / mingw)",
+      "type": "shell",
+      "command": "cmake --build --preset mingw",
+      "dependsOn": "Configurer (Windows / mingw)",
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "Configurer (Linux / clang)",
+      "type": "shell",
+      "command": "cmake --preset clang",
+      "problemMatcher": []
+    },
+    {
+      "label": "Compiler (Linux / clang)",
+      "type": "shell",
+      "command": "cmake --build --preset clang",
+      "dependsOn": "Configurer (Linux / clang)",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$gcc"]
+    }
+  ]
+}

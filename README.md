@@ -137,6 +137,12 @@ Le binaire est produit dans `bin/`, comme pour le build natif. Détails :
   GCC 13) quand `<print>` est absent, utilisé de façon transparente par
   `src/main.cpp`.
 
+**Depuis VS Code** : les commandes ci-dessus sont aussi disponibles comme
+tâches (`.vscode/tasks.json`), accessibles via la palette de commandes
+(`Ctrl+Shift+P` → **Tasks: Run Task**) → `Compiler (Windows / mingw)`. Seul
+le preset Linux/clang est lancé par défaut avec `Ctrl+Shift+B` ; pour mingw,
+il faut passer par "Tasks: Run Task".
+
 ### Lancement
 
 ```bash
