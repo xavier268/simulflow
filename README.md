@@ -10,6 +10,17 @@ sur l'obstacle.
 Rendu et fenêtrage via [raylib](https://www.raylib.com/) ; C++23 ; build
 CMake avec presets Clang/libc++.
 
+<p align="center">
+  <img src="demo/vitesse.png" width="32%" alt="Champ de vitesse autour d'un profil NACA cambré" />
+  <img src="demo/pression.png" width="32%" alt="Champ de pression (Cp) autour d'un profil NACA cambré" />
+  <img src="demo/vorticite.png" width="32%" alt="Champ de vorticité révélant le décollement tourbillonnaire" />
+</p>
+
+<p align="center"><sub>
+  Vitesse · Pression (Cp) · Vorticité — même écoulement, trois champs
+  affichables en direct avec <code>V</code> (voir <a href="#champs-affichés">Champs affichés</a>)
+</sub></p>
+
 ---
 
 ## Sommaire
