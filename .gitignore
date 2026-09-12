@@ -1,5 +1,6 @@
 # --- Dossiers et fichiers de Build ---
 /build/
+/build-mingw/
 /bin/
 /lib/
 /out/

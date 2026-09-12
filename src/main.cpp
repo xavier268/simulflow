@@ -9,8 +9,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
-#include <print>
 #include <vector>
+
+#include "print_compat.hpp"
 
 namespace {
 
@@ -141,9 +142,8 @@ int run_bench(LbmEngine &engine, int total_iters) {
   const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
   const double lups =
       static_cast<double>(engine.width()) * engine.height() * total_iters;
-  std::println(
-      "bench : {} iters en {:.0f} ms  ->  {:.3f} ms/iter, {:.1f} MLUPS",
-      total_iters, ms, ms / total_iters, lups / (ms * 1e3));
+  println("bench : {} iters en {:.0f} ms  ->  {:.3f} ms/iter, {:.1f} MLUPS",
+          total_iters, ms, ms / total_iters, lups / (ms * 1e3));
 
   // Contrôle de stabilité : la vitesse max doit rester finie et ~ O(u_in).
   std::vector<Color> px;
@@ -156,18 +156,18 @@ int run_bench(LbmEngine &engine, int total_iters) {
       finite = finite && std::isfinite(s);
       vmax = std::max(vmax, s);
     }
-  std::println("stabilite : vmax = {:.4f} (u_in = {}), fini = {}", vmax,
-               kInletVelocity, finite);
-  std::println("efforts   : Cx = {:+.4f}   Cz = {:+.4f}",
-               engine.drag_coefficient(), engine.lift_coefficient());
+  println("stabilite : vmax = {:.4f} (u_in = {}), fini = {}", vmax,
+          kInletVelocity, finite);
+  println("efforts   : Cx = {:+.4f}   Cz = {:+.4f}", engine.drag_coefficient(),
+          engine.lift_coefficient());
   return finite ? 0 : 1;
 }
 
 } // namespace
 
 int main(int argc, char **argv) {
-  std::println("simulflow v{}  ({}, {})", version::VERSION, version::GIT_HASH,
-               version::COMPILER);
+  println("simulflow v{}  ({}, {})", version::VERSION, version::GIT_HASH,
+          version::COMPILER);
 
   // Moteur manipulé via l'interface ISimulationEngine (dispatch virtuel).
   auto engine = std::make_unique<LbmEngine>();
@@ -175,8 +175,8 @@ int main(int argc, char **argv) {
   engine->set_inlet_velocity(kInletVelocity);
   engine->init(kGridWidth, kGridHeight);
 
-  std::println("Moteur : {}   Re ~ {:.0f}", engine->get_name(),
-               engine->reynolds(kGridHeight / 5.0));
+  println("Moteur : {}   Re ~ {:.0f}", engine->get_name(),
+          engine->reynolds(kGridHeight / 5.0));
 
   if (argc > 1 && std::strcmp(argv[1], "--bench") == 0) {
     const int iters = (argc > 2) ? std::max(std::atoi(argv[2]), 50) : 2000;
@@ -205,7 +205,7 @@ int main(int argc, char **argv) {
   bool show_hud = true; // H : bascule l'overlay d'infos/instructions en haut
   double last_rot_time = 0.0;   // anti-rebond des touches de rotation
   double last_trans_time = 0.0; // anti-rebond des touches de translation
-  std::vector<float> cz_hist; // historique du coefficient de portance
+  std::vector<float> cz_hist;   // historique du coefficient de portance
   cz_hist.reserve(kHistLen);
 
   // Reconstruit grille + texture + moteur pour coller à une nouvelle taille de
@@ -213,10 +213,10 @@ int main(int argc, char **argv) {
   const auto rebuild_for_window = [&](int new_w, int new_h) {
     window_w = new_w;
     window_h = new_h;
-    grid_w = std::max(kGridMin,
-                       static_cast<int>(std::lround(window_w / kCellPx)));
-    grid_h = std::max(kGridMin,
-                       static_cast<int>(std::lround(window_h / kCellPx)));
+    grid_w =
+        std::max(kGridMin, static_cast<int>(std::lround(window_w / kCellPx)));
+    grid_h =
+        std::max(kGridMin, static_cast<int>(std::lround(window_h / kCellPx)));
 
     pixels.assign(static_cast<std::size_t>(grid_w) * grid_h,
                   Color{0, 0, 0, 255});
@@ -396,8 +396,8 @@ int main(int argc, char **argv) {
       DrawText("Cz", 115, 32, 18, YELLOW);
       val_right(TextFormat("%+.2f", cz), 200, 32);
       DrawText("finesse Cz/Cx", 220, 32, 18, YELLOW);
-      val_right(std::fabs(cx) > 5e-3 ? TextFormat("%+.1f", cz / cx) : "--",
-                400, 32);
+      val_right(std::fabs(cx) > 5e-3 ? TextFormat("%+.1f", cz / cx) : "--", 400,
+                32);
       DrawText(
           TextFormat("clic G : obstacle   clic D : gomme   molette : "
                      "pinceau (%d)   +/- : pivoter   fleches : deplacer   "
@@ -408,8 +408,8 @@ int main(int argc, char **argv) {
     }
 
     if (show_cz_plot)
-      draw_plot(cz_hist,
-                Rectangle{10.0f, window_h - 130.0f, 340.0f, 120.0f}, "Cz(t)");
+      draw_plot(cz_hist, Rectangle{10.0f, window_h - 130.0f, 340.0f, 120.0f},
+                "Cz(t)");
 
     if (show_hud)
       DrawFPS(window_w - 90, 10);

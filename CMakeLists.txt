@@ -33,11 +33,25 @@ endif()
 message(STATUS "Build type : ${CMAKE_BUILD_TYPE}")
 
 # Optimisations agressives pour NOTRE code en Release (n'affecte pas raylib).
-# -march=native : autorisé ici, projet local WSL ; à retirer pour distribuer.
+# -march=native : autorisé pour un build natif (projet local WSL), mais exclu
+# en cross-compilation (preset "mingw") : le binaire produit est destiné à
+# être distribué sur des PC Windows dont le CPU exact est inconnu, et
+# -march=native s'appuierait ici sur le CPU de la machine Linux qui compile.
 add_compile_options(
     $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-O3>
-    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-march=native>
 )
+if(NOT CMAKE_CROSSCOMPILING)
+    add_compile_options(
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:-march=native>
+    )
+endif()
+
+# Build Windows autonome (preset "mingw") : lien statique complet du
+# runtime C/C++ et de winpthread => un seul .exe, sans DLL à distribuer à
+# côté (raylib est déjà forcée en bibliothèque statique, voir SECTION 4).
+if(MINGW)
+    add_link_options(-static -static-libgcc -static-libstdc++)
+endif()
 
 # Enforce LLVM's libc++ when using Clang (enables modern C++23 headers like <print>)
 #

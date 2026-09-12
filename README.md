@@ -87,6 +87,36 @@ déboguer :
 cmake --preset clang -DCMAKE_BUILD_TYPE=Debug
 ```
 
+#### Cross-compilation vers Windows (.exe autonome)
+
+Un preset dédié produit, depuis Linux, un `.exe` Windows **statique** (aucune
+DLL à distribuer à côté) via MinGW-w64 :
+
+```bash
+sudo apt install -y mingw-w64
+cmake --preset mingw
+cmake --build --preset mingw
+```
+
+Le binaire est produit dans `bin/`, comme pour le build natif. Détails :
+
+- toolchain : `cmake/toolchain-mingw64.cmake` (compilateurs
+  `x86_64-w64-mingw32-{gcc,g++,windres}`) ;
+- raylib est recompilée pour la cible Windows (backend Win32) par le même
+  mécanisme `FetchContent` que le build natif ;
+- runtime C/C++ (libstdc++, libgcc, winpthread) et raylib liés **statiquement**
+  (`-static -static-libgcc -static-libstdc++`) : le `.exe` ne dépend que des
+  DLL systèmes présentes sur tout Windows (`kernel32`, `user32`, `gdi32`,
+  `shell32`, `winmm`) ;
+- `-march=native` est désactivé en cross-compilation (`CMAKE_CROSSCOMPILING`) :
+  le binaire est destiné à tourner sur un CPU Windows inconnu, pas celui de la
+  machine Linux qui compile ;
+- le compilateur MinGW-w64 disponible sous Ubuntu 24.04 est figé à GCC 13, qui
+  n'implémente pas encore `<print>` (C++23) — `include/print_compat.hpp`
+  fournit un `println()` de repli basé sur `std::format` (disponible depuis
+  GCC 13) quand `<print>` est absent, utilisé de façon transparente par
+  `src/main.cpp`.
+
 ### Lancement
 
 ```bash

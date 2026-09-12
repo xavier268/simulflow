@@ -11,12 +11,24 @@
       "cacheVariables": {
         "CMAKE_CXX_COMPILER": "clang++"
       }
+    },
+    {
+      "name": "mingw",
+      "displayName": "MinGW-w64 (cross Linux -> Windows, statique)",
+      "description": "Cross-compilation vers un .exe Windows autonome (sudo apt install mingw-w64)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-mingw",
+      "toolchainFile": "${sourceDir}/cmake/toolchain-mingw64.cmake"
     }
   ],
   "buildPresets": [
     {
       "name": "clang",
       "configurePreset": "clang"
+    },
+    {
+      "name": "mingw",
+      "configurePreset": "mingw"
     }
   ]
 }
