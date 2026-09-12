@@ -23,8 +23,28 @@ CMake avec presets Clang/libc++.
 
 ---
 
+## Compilation rapide
+
+```bash
+# Linux (headers X11/OpenGL requis pour compiler raylib, voir Prérequis) :
+sudo apt install -y libgl1-mesa-dev libx11-dev libxrandr-dev \
+    libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev wayland-protocols
+cmake --preset clang && cmake --build --preset clang
+./bin/simulflow_v1.0.1_<hash>
+
+# Windows, .exe autonome, cross-compilé depuis Linux :
+sudo apt install -y mingw-w64
+cmake --preset mingw && cmake --build --preset mingw
+```
+
+Détails, prérequis complets et dépannage : voir
+[Compilation](#compilation) ci-dessous.
+
+---
+
 ## Sommaire
 
+- [Compilation rapide](#compilation-rapide)
 - [Utilisation](#utilisation)
   - [Prérequis](#prérequis)
   - [Compilation](#compilation)
